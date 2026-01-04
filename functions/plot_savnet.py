@@ -49,11 +49,11 @@ def plot_savnet(mat_contents0, fname):
         ax[1].grid()
 
         plt.tight_layout()
-        plt.show()
 
         rc = 0
 
-    except:
+    except Exception as exc:
+        print(f"plot_savnet error: {exc}")
         rc = 255  # error
 
     return fig, rc

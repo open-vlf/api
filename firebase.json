@@ -2,6 +2,7 @@
   "functions": [
     {
       "source": "functions",
+      "runtime": "python311",
       "codebase": "default",
       "ignore": [
         "venv",
