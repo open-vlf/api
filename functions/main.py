@@ -3,6 +3,8 @@ import io
 import os
 import boto3
 import re
+from urllib.parse import urlparse
+from botocore.exceptions import ClientError
 
 from datetime import datetime, timezone
 
@@ -192,6 +194,23 @@ def fits_graph(object_buffer, path):
         status=200, response=f"data:image/png;base64,{base64_utf8_str}"
     )
 
+def normalize_s3_key(path: str, bucket_name: str) -> str:
+    if path.startswith("http://") or path.startswith("https://"):
+        parsed = urlparse(path)
+        key = parsed.path.lstrip("/")
+        if key.startswith(f"{bucket_name}/"):
+            key = key[len(bucket_name) + 1 :]
+        return key
+
+    if path.startswith("s3://"):
+        remaining = path[5:]
+        if remaining.startswith(f"{bucket_name}/"):
+            return remaining[len(bucket_name) + 1 :]
+        parts = remaining.split("/", 1)
+        return parts[1] if len(parts) > 1 else ""
+
+    return path.lstrip("/")
+
 
 @https_fn.on_request(cors=options.CorsOptions(cors_origins="*", cors_methods=["post"]))
 def graph_generator(req: https_fn.Request) -> https_fn.Response:
@@ -203,19 +222,29 @@ def graph_generator(req: https_fn.Request) -> https_fn.Response:
         return https_fn.Response(status=400, response="Path string missing")
 
     path = body_data["path"]
+    key = normalize_s3_key(path, bucket)
+    if not key:
+        return https_fn.Response(status=400, response="Invalid path")
 
     # Download file data with buffer
     object_buffer = io.BytesIO()
-    s3.download_fileobj(Bucket=bucket, Key=path, Fileobj=object_buffer)
+    try:
+        s3.download_fileobj(Bucket=bucket, Key=key, Fileobj=object_buffer)
+    except ClientError as exc:
+        error_code = exc.response.get("Error", {}).get("Code")
+        if error_code in ("404", "NoSuchKey", "NotFound"):
+            print(f"graph_generator missing key: {key}")
+            return https_fn.Response(status=404, response="File not found")
+        raise
 
     # Restart buffer pointer
     object_buffer.seek(0)
 
-    if path.endswith(".fits"):
-        return fits_graph(object_buffer, path)
+    if key.lower().endswith(".fits"):
+        return fits_graph(object_buffer, key)
 
-    elif path.endswith(".mat"):
-        return mat_graph(object_buffer, path)
+    elif key.lower().endswith(".mat"):
+        return mat_graph(object_buffer, key)
 
     return https_fn.Response(status=404)
 

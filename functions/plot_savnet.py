@@ -21,9 +21,25 @@ def plot_savnet(mat_contents0, fname):
         rcParams['font.size'] = 10
         rcParams['xtick.labelsize'] = 10
 
-        t = pd.date_range(fx[0].header['DATE-OBS'], periods=fx[0].header['NAXIS2'], freq='s')
-        df = pd.DataFrame(fx[0].data.byteswap().newbyteorder(), columns=header,
-                          index=t)  # https://github.com/astropy/astropy/issues/1156
+        t = pd.date_range(
+            fx[0].header["DATE-OBS"],
+            periods=fx[0].header["NAXIS2"],
+            freq="s",
+        )
+        data = fx[0].data.byteswap().newbyteorder()
+        columns_count = data.shape[1] if data.ndim > 1 else 1
+        if len(header) != columns_count:
+            if len(header) < columns_count:
+                header = header + [
+                    f"col_{index}" for index in range(len(header), columns_count)
+                ]
+            else:
+                header = header[:columns_count]
+        df = pd.DataFrame(
+            data,
+            columns=header,
+            index=t,
+        )  # https://github.com/astropy/astropy/issues/1156
 
         df = df.resample('60 s').mean()
 
