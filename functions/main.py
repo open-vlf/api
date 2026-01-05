@@ -174,7 +174,10 @@ def fits_graph(object_buffer, path):
     from plot_savnet import plot_savnet
 
     plt = init_plot()
-    fx = fits.open(object_buffer, memmap=True)
+    try:
+        fx = fits.open(object_buffer, memmap=True)
+    except OSError:
+        return https_fn.Response(status=400, response="Error while creating plot")
 
     filename = path.split('/')[-1]
     fig, rc = plot_savnet(fx, filename)
@@ -233,11 +236,34 @@ def graph_generator(req: https_fn.Request) -> https_fn.Response:
     except ClientError as exc:
         error_code = exc.response.get("Error", {}).get("Code")
         if error_code in ("404", "NoSuchKey", "NotFound"):
-            print(f"graph_generator missing key: {key}")
-            return https_fn.Response(status=404, response="File not found")
-        raise
+            alt_key = None
+            if key.lower().endswith(".fits"):
+                year_part = key.split("/", 1)[0]
+                if year_part.isdigit() and len(year_part) == 4:
+                    alt_key = f"20{key}"
+            if alt_key:
+                try:
+                    object_buffer = io.BytesIO()
+                    s3.download_fileobj(Bucket=bucket, Key=alt_key, Fileobj=object_buffer)
+                    key = alt_key
+                except ClientError as alt_exc:
+                    alt_code = alt_exc.response.get("Error", {}).get("Code")
+                    if alt_code in ("404", "NoSuchKey", "NotFound"):
+                        print(f"graph_generator missing key: {key}")
+                        print(f"graph_generator missing alt key: {alt_key}")
+                        return https_fn.Response(status=404, response="File not found")
+                    raise
+            else:
+                print(f"graph_generator missing key: {key}")
+                return https_fn.Response(status=404, response="File not found")
+        else:
+            raise
 
-    # Restart buffer pointer
+    # Restart buffer pointer and guard against empty objects
+    object_buffer.seek(0, io.SEEK_END)
+    if object_buffer.tell() == 0:
+        print(f"graph_generator empty file: {key}")
+        return https_fn.Response(status=404, response="File not found")
     object_buffer.seek(0)
 
     if key.lower().endswith(".fits"):
